@@ -1,6 +1,9 @@
 rm(list = ls())# clear the workspace
 library(stats)
-set.seed(20210512)
+curr_scenario = 'all' # <== set to specific number or to 'all'
+n_replicates = 3
+curr_seed = 20210512
+set.seed(curr_seed)
 
 ########################################################################################################
 ## Sources of data on number of primary and secondary schools, teachers/school, and pupils per school:##
@@ -16,7 +19,7 @@ Malawi_n_primary_schools = 6065
 Malawi_n_secondary_schools = 1411
 Malawi_n_primary_schools + Malawi_n_secondary_schools
 
-fraction_of_Malawi_to_simulate = 1/25
+fraction_of_Malawi_to_simulate = 1/700
 
 model_n_primary_schools = round(Malawi_n_primary_schools*fraction_of_Malawi_to_simulate,digits=0)
 model_n_secondary_schools = round(Malawi_n_secondary_schools*fraction_of_Malawi_to_simulate,digits=0)
@@ -55,7 +58,10 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
       for(community_prevalence in c(0.001, 0.01)){
         
         scenario_iter = scenario_iter+1
-        if(scenario_iter==19){scenario_iter = scenario_iter+1; print("Skipping Scenario 19 because it is identical to Scenario 18")}
+        
+        if(curr_scenario != "ALL" & curr_scenario != "all" & curr_scenario != scenario_iter){next} # option of running only one scenario (for parallel computing)
+        if(scenario_iter==19){print("Skipping Scenario 19 because it is identical to Scenario 18"); next}
+        
         #print(paste0("Scenario ",scenario_iter,": ",testing_pop," -- ",testing_freq," -- Rt=",Rt," -- comm prev ",community_prevalence))
         
         ## For testing purposes, just hard-set a single scenarion
@@ -78,185 +84,192 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
         ### If looking for CI for multiple runs of the whole country -- begin loop over aggregate of all Malawi schools ###
         ###################################################################################################################
         
-        start_1_natl_sim <- Sys.time()
-        agg_natl = setNames(data.frame(matrix(0, ncol = length(agg_data_columns), nrow = n_days_to_simulate)), agg_data_columns)
-        
-        
-        ############################################################
-        ### Begin setup/sim/processing of each individual school ###
-        ############################################################
-        
-        #for(school_iter in seq(1,3,1)){
-        for(school_iter in seq(1,model_n_primary_schools + model_n_secondary_schools,1)){
-          if(school_iter > model_n_primary_schools){school_type = "SECONDARY"}else{school_type = "PRIMARY"}
+        for(replicate_number in seq(1,n_replicates)){
           
-          agg_schl = setNames(data.frame(matrix(0, ncol = length(agg_data_columns), nrow = n_days_to_simulate)), agg_data_columns)
+          start_1_natl_sim <- Sys.time()
           
-          if(school_type=="PRIMARY"){
-            n_teachers = round(teachers_per_primary_school,digits=0)
-            n_pupils = round(pupils_per_primary_school,digits=0)
-            n_schools = 6065
+          agg_natl = setNames(data.frame(matrix(0, ncol = length(agg_data_columns), nrow = n_days_to_simulate)), agg_data_columns)
+          
+          if(n_replicates>1){
+            agg_indiv_reps = matrix()
             
-            # Datner 2021 Israeli study: children age 0-19 are 43%[31%-55%] as suscepible as adults and 63%[37%-88%] as infectious as adults
-            #https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1008559
-            
-            # Zhu 2020 global meta-analysis: children 62% [42%-91%] as susceptible as adults and ?? as infectious as adults
-            # Instead of estimating how much less infectious kids are, they estimated how much less infectious asymptomatic people are :( and they are 19% as infectious
-            # In household transmission studies, children are found to be the index case only 18.5% of the time
-            # "In a subset analysis where additional information was provided on the age of the pediatric contact, younger children (<10 years) were no more or less susceptible to infection compared with older children (>10 years); RR=0.69 (95% CI, 0.26-1.82) "
-            # https://academic.oup.com/cid/advance-article/doi/10.1093/cid/ciaa1825/6024998
-            
-            rel_infectiousness_child   = 0.63
-            rel_susceptibility_child = 0.43
-            
-          }else{
-            n_teachers = round(teachers_per_secondary_school,digits=0)
-            n_pupils = round(pupils_per_secondary_school,digits=0)
-            n_schools = 1411
-            rel_infectiousness_child   = 1
-            rel_susceptibility_child = 1
           }
           
-          pop_per_school = n_teachers + n_pupils
+          ############################################################
+          ### Begin setup/sim/processing of each individual school ###
+          ############################################################
           
-          infectiousness_over_time_NOT_NORMALIZED = dgamma(x=seq(0,days_of_active_infection,1), shape=2.25, rate = (1/2.8))
-          normalizing_multiplier = Rt/(frac_days_in_school*pop_per_school*sum(infectiousness_over_time_NOT_NORMALIZED)) #### TO DO -- normalizing multiplier sep for teachers and pupils
-          infectiousness_over_time = infectiousness_over_time_NOT_NORMALIZED*normalizing_multiplier
-          
-          infectiousness_over_time_child = infectiousness_over_time*rel_infectiousness_child
-          
-          sim_burnin = setNames(data.frame(matrix(0, ncol = length(sim_data_columns), nrow = days_of_active_infection)), sim_data_columns)
-          
-          # Draw from Binomial distribution for how many people got infected in the community
-          sim_burnin$t_I_1 = rbinom(n=days_of_active_infection,size=n_teachers,prob=community_incidence)
-          sim_burnin$p_I_1 = rbinom(n=days_of_active_infection,size=n_pupils,  prob=community_incidence)
-          
-          # allow infected people to progress through the days of infection
-          for(d_iter in seq(1,days_of_active_infection-1)){  
-            sim_burnin[[paste0("t_I_",d_iter+1)]][-1]=sim_burnin[[paste0("t_I_",d_iter)]][1:(length(sim_burnin$t_I_1)-1)]
-            sim_burnin[[paste0("p_I_",d_iter+1)]][-1]=sim_burnin[[paste0("p_I_",d_iter)]][1:(length(sim_burnin$p_I_1)-1)]  
-          }
-          sim_burnin = sim_burnin[nrow(sim_burnin),] # only take the final day of burn-in, which will be the first day of the sim
-          
-          sim  = setNames(data.frame(matrix(0, ncol = length(sim_data_columns), nrow = n_days_to_simulate)), sim_data_columns)
-          sim[1,] = sim_burnin[1,] # start the first day from the burn-in
-          
-          sim$t_I_1[1]=rbinom(n=1,size=n_teachers,prob=community_incidence)
-          sim$p_I_1[1]=rbinom(n=1,size=n_pupils,  prob=community_incidence)
-          sim$t_S[1] = n_teachers - sim$t_E[1] - sim$t_R[1] - sum(sim[1,paste0("t_I_",seq(1,15,1))])
-          sim$p_S[1] = n_pupils -   sim$p_E[1] - sim$p_R[1] - sum(sim[1,paste0("p_I_",seq(1,15,1))])                            
-          
-          #######################################
-          ########## begin simulation ###########
-          #######################################
-          
-          for(d_iter in seq(1,n_days_to_simulate-1)){
+          #for(school_iter in seq(1,3,1)){
+          for(school_iter in seq(1,model_n_primary_schools + model_n_secondary_schools,1)){
+            if(school_iter > model_n_primary_schools){school_type = "SECONDARY"}else{school_type = "PRIMARY"}
             
-            if(((d_iter-1) %% 7)<(7*frac_days_in_school)){
+            agg_schl = setNames(data.frame(matrix(0, ncol = length(agg_data_columns), nrow = n_days_to_simulate)), agg_data_columns)
+            
+            if(school_type=="PRIMARY"){
+              n_teachers = round(teachers_per_primary_school,digits=0)
+              n_pupils = round(pupils_per_primary_school,digits=0)
+              n_schools = 6065
               
-              if(ENABLE_SCHOOL_BASED_TESTING){
-                
-                # Check if today is a testing day
-                if(is.element(d_iter,testing_days)){
-                  
-                  ### NOTE, by changing seq(1,15,1) below to a narrower range, we can have an imperfect Ag test that misses the very start and end of infection when viral shedding is low
-                  
-                  # All testing strategies include teachers. So if it is a testing day, move infected teachers to R.
-                  sim$t_R[d_iter] = sim$t_R[d_iter] + sum(sim[d_iter,paste0("t_I_",seq(1,15,1))])
-                  sim[d_iter,paste0("t_I_",seq(1,15,1))]=0
-                  
-                  # Some testing strategies include students. Always schools if "All teachers + all students." Secondary schools if "All teachers + 13-18 year olds." Primary schools if "All teachers + 5-12 year olds."
-                  if( testing_pop == "All teachers + all students" | (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
-                    sim$p_R[d_iter] = sim$p_R[d_iter] + sum(sim[d_iter,paste0("p_I_",seq(1,15,1))])
-                    sim[d_iter,paste0("p_I_",seq(1,15,1))]=0
-                  }
-                }
-              }
+              # Datner 2021 Israeli study: children age 0-19 are 43%[31%-55%] as suscepible as adults and 63%[37%-88%] as infectious as adults
+              #https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1008559
               
-              # calculate how much infectiousness arises from all teachers (t_bI) and all pupils (p_bI)
-              sim$t_bI[d_iter] = sum(as.vector(sim[d_iter,paste0("t_I_",seq(1,15,1))]*infectiousness_over_time))
-              sim$p_bI[d_iter] = sum(as.vector(sim[d_iter,paste0("p_I_",seq(1,15,1))]*infectiousness_over_time_child))
+              # Zhu 2020 global meta-analysis: children 62% [42%-91%] as susceptible as adults and ?? as infectious as adults
+              # Instead of estimating how much less infectious kids are, they estimated how much less infectious asymptomatic people are :( and they are 19% as infectious
+              # In household transmission studies, children are found to be the index case only 18.5% of the time
+              # "In a subset analysis where additional information was provided on the age of the pediatric contact, younger children (<10 years) were no more or less susceptible to infection compared with older children (>10 years); RR=0.69 (95% CI, 0.26-1.82) "
+              # https://academic.oup.com/cid/advance-article/doi/10.1093/cid/ciaa1825/6024998
               
-              # calculate the number of teachers who end up infected by converting sum of daily rates t_bI and p_bI to probability
-              ## print(paste0(rbinom(n=1,size=sim$t_S[d_iter],prob = 1-exp(-1*(sim$t_bI[d_iter]+sim$p_bI[d_iter])))," teachers infected on day ",d_iter))
-              if(sim$t_S[d_iter]>0 & (sim$t_bI[d_iter] + sim$p_bI[d_iter])>0){sim$t_I1_schl[d_iter+1]=rbinom(n=1,size=sim$t_S[d_iter],prob = 1-exp(-1*(sim$t_bI[d_iter]+sim$p_bI[d_iter])))}
+              rel_infectiousness_child   = 0.63
+              rel_susceptibility_child = 0.43
               
-              # calculate the number of pupils  who end up infected -- this time reducing t_bI and p_bI by rel_susceptibility_child
-              ## print(paste0(rbinom(n=1,size=sim$t_S[d_iter],prob = 1-exp(-1*(sim$t_bI[d_iter]+sim$p_bI[d_iter])))," pupils infected on day ",d_iter))
-              if(sim$p_S[d_iter]>0 & (sim$t_bI[d_iter] + sim$p_bI[d_iter])>0){sim$p_I1_schl[d_iter+1]=rbinom(n=1,size=sim$p_S[d_iter],prob = 1-exp(-1*rel_susceptibility_child*(sim$t_bI[d_iter]+sim$p_bI[d_iter])))}
-              
+            }else{
+              n_teachers = round(teachers_per_secondary_school,digits=0)
+              n_pupils = round(pupils_per_secondary_school,digits=0)
+              n_schools = 1411
+              rel_infectiousness_child   = 1
+              rel_susceptibility_child = 1
             }
             
-            # calculate community incidence into teachers (t) and pupils (p) who are S and not about to be infected at school
-            sim$t_I1_comm[d_iter+1]=rbinom(n=1,size=sim$t_S[d_iter]-sim$t_I1_schl[d_iter+1],prob = community_incidence) 
-            sim$p_I1_comm[d_iter+1]=rbinom(n=1,size=sim$p_S[d_iter]-sim$p_I1_schl[d_iter+1],prob = community_incidence) 
+            pop_per_school = n_teachers + n_pupils
             
-            # calculate total incident cases = school transmission + community transmission 
-            sim$t_I_1[d_iter+1]=sim$t_I1_schl[d_iter+1]+sim$t_I1_comm[d_iter+1]
-            sim$p_I_1[d_iter+1]=sim$p_I1_schl[d_iter+1]+sim$p_I1_comm[d_iter+1]  
+            infectiousness_over_time_NOT_NORMALIZED = dgamma(x=seq(0,days_of_active_infection,1), shape=2.25, rate = (1/2.8))
+            normalizing_multiplier = Rt/(frac_days_in_school*pop_per_school*sum(infectiousness_over_time_NOT_NORMALIZED)) #### TO DO -- normalizing multiplier sep for teachers and pupils
+            infectiousness_over_time = infectiousness_over_time_NOT_NORMALIZED*normalizing_multiplier
             
-            # today's infections on days 1 thru 14 become tomorrow's day 2 thru 15
-            sim[d_iter+1,paste0("t_I_",seq(2,15,1))]=sim[d_iter,paste0("t_I_",seq(1,14,1))]
-            sim[d_iter+1,paste0("p_I_",seq(2,15,1))]=sim[d_iter,paste0("p_I_",seq(1,14,1))]
+            infectiousness_over_time_child = infectiousness_over_time*rel_infectiousness_child
             
-            # today's day-15 infections join tomorrow's recovered
-            sim$t_R[d_iter+1] = sim$t_R[d_iter]+sim$t_I_15[d_iter]
-            sim$p_R[d_iter+1] = sim$p_R[d_iter]+sim$p_I_15[d_iter]
+            sim_burnin = setNames(data.frame(matrix(0, ncol = length(sim_data_columns), nrow = days_of_active_infection)), sim_data_columns)
             
-            # susceptibles make up the balance of the school population
-            sim$t_S[d_iter+1] = n_teachers - sim$t_E[d_iter+1] - sim$t_R[d_iter+1] - sum(sim[d_iter+1,paste0("t_I_",seq(1,15,1))])
-            sim$p_S[d_iter+1] = n_pupils   - sim$p_E[d_iter+1] - sim$p_R[d_iter+1] - sum(sim[d_iter+1,paste0("p_I_",seq(1,15,1))])
+            # Draw from Binomial distribution for how many people got infected in the community
+            sim_burnin$t_I_1 = rbinom(n=days_of_active_infection,size=n_teachers,prob=community_incidence)
+            sim_burnin$p_I_1 = rbinom(n=days_of_active_infection,size=n_pupils,  prob=community_incidence)
+            
+            # allow infected people to progress through the days of infection
+            for(d_iter in seq(1,days_of_active_infection-1)){  
+              sim_burnin[[paste0("t_I_",d_iter+1)]][-1]=sim_burnin[[paste0("t_I_",d_iter)]][1:(length(sim_burnin$t_I_1)-1)]
+              sim_burnin[[paste0("p_I_",d_iter+1)]][-1]=sim_burnin[[paste0("p_I_",d_iter)]][1:(length(sim_burnin$p_I_1)-1)]  
+            }
+            sim_burnin = sim_burnin[nrow(sim_burnin),] # only take the final day of burn-in, which will be the first day of the sim
+            
+            sim  = setNames(data.frame(matrix(0, ncol = length(sim_data_columns), nrow = n_days_to_simulate)), sim_data_columns)
+            sim[1,] = sim_burnin[1,] # start the first day from the burn-in
+            
+            sim$t_I_1[1]=rbinom(n=1,size=n_teachers,prob=community_incidence)
+            sim$p_I_1[1]=rbinom(n=1,size=n_pupils,  prob=community_incidence)
+            sim$t_S[1] = n_teachers - sim$t_E[1] - sim$t_R[1] - sum(sim[1,paste0("t_I_",seq(1,15,1))])
+            sim$p_S[1] = n_pupils -   sim$p_E[1] - sim$p_R[1] - sum(sim[1,paste0("p_I_",seq(1,15,1))])                            
+            
+            #######################################
+            ########## begin simulation ###########
+            #######################################
+            
+            for(d_iter in seq(1,n_days_to_simulate-1)){
+              
+              if(((d_iter-1) %% 7)<(7*frac_days_in_school)){
+                
+                if(ENABLE_SCHOOL_BASED_TESTING){
+                  
+                  # Check if today is a testing day
+                  if(is.element(d_iter,testing_days)){
+                    
+                    ### NOTE, by changing seq(1,15,1) below to a narrower range, we can have an imperfect Ag test that misses the very start and end of infection when viral shedding is low
+                    
+                    # All testing strategies include teachers. So if it is a testing day, move infected teachers to R.
+                    sim$t_R[d_iter] = sim$t_R[d_iter] + sum(sim[d_iter,paste0("t_I_",seq(1,15,1))])
+                    sim[d_iter,paste0("t_I_",seq(1,15,1))]=0
+                    
+                    # Some testing strategies include students. Always schools if "All teachers + all students." Secondary schools if "All teachers + 13-18 year olds." Primary schools if "All teachers + 5-12 year olds."
+                    if( testing_pop == "All teachers + all students" | (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
+                      sim$p_R[d_iter] = sim$p_R[d_iter] + sum(sim[d_iter,paste0("p_I_",seq(1,15,1))])
+                      sim[d_iter,paste0("p_I_",seq(1,15,1))]=0
+                    }
+                  }
+                }
+                
+                # calculate how much infectiousness arises from all teachers (t_bI) and all pupils (p_bI)
+                sim$t_bI[d_iter] = sum(as.vector(sim[d_iter,paste0("t_I_",seq(1,15,1))]*infectiousness_over_time))
+                sim$p_bI[d_iter] = sum(as.vector(sim[d_iter,paste0("p_I_",seq(1,15,1))]*infectiousness_over_time_child))
+                
+                # calculate the number of teachers who end up infected by converting sum of daily rates t_bI and p_bI to probability
+                ## print(paste0(rbinom(n=1,size=sim$t_S[d_iter],prob = 1-exp(-1*(sim$t_bI[d_iter]+sim$p_bI[d_iter])))," teachers infected on day ",d_iter))
+                if(sim$t_S[d_iter]>0 & (sim$t_bI[d_iter] + sim$p_bI[d_iter])>0){sim$t_I1_schl[d_iter+1]=rbinom(n=1,size=sim$t_S[d_iter],prob = 1-exp(-1*(sim$t_bI[d_iter]+sim$p_bI[d_iter])))}
+                
+                # calculate the number of pupils  who end up infected -- this time reducing t_bI and p_bI by rel_susceptibility_child
+                ## print(paste0(rbinom(n=1,size=sim$t_S[d_iter],prob = 1-exp(-1*(sim$t_bI[d_iter]+sim$p_bI[d_iter])))," pupils infected on day ",d_iter))
+                if(sim$p_S[d_iter]>0 & (sim$t_bI[d_iter] + sim$p_bI[d_iter])>0){sim$p_I1_schl[d_iter+1]=rbinom(n=1,size=sim$p_S[d_iter],prob = 1-exp(-1*rel_susceptibility_child*(sim$t_bI[d_iter]+sim$p_bI[d_iter])))}
+                
+              }
+              
+              # calculate community incidence into teachers (t) and pupils (p) who are S and not about to be infected at school
+              sim$t_I1_comm[d_iter+1]=rbinom(n=1,size=sim$t_S[d_iter]-sim$t_I1_schl[d_iter+1],prob = community_incidence) 
+              sim$p_I1_comm[d_iter+1]=rbinom(n=1,size=sim$p_S[d_iter]-sim$p_I1_schl[d_iter+1],prob = community_incidence) 
+              
+              # calculate total incident cases = school transmission + community transmission 
+              sim$t_I_1[d_iter+1]=sim$t_I1_schl[d_iter+1]+sim$t_I1_comm[d_iter+1]
+              sim$p_I_1[d_iter+1]=sim$p_I1_schl[d_iter+1]+sim$p_I1_comm[d_iter+1]  
+              
+              # today's infections on days 1 thru 14 become tomorrow's day 2 thru 15
+              sim[d_iter+1,paste0("t_I_",seq(2,15,1))]=sim[d_iter,paste0("t_I_",seq(1,14,1))]
+              sim[d_iter+1,paste0("p_I_",seq(2,15,1))]=sim[d_iter,paste0("p_I_",seq(1,14,1))]
+              
+              # today's day-15 infections join tomorrow's recovered
+              sim$t_R[d_iter+1] = sim$t_R[d_iter]+sim$t_I_15[d_iter]
+              sim$p_R[d_iter+1] = sim$p_R[d_iter]+sim$p_I_15[d_iter]
+              
+              # susceptibles make up the balance of the school population
+              sim$t_S[d_iter+1] = n_teachers - sim$t_E[d_iter+1] - sim$t_R[d_iter+1] - sum(sim[d_iter+1,paste0("t_I_",seq(1,15,1))])
+              sim$p_S[d_iter+1] = n_pupils   - sim$p_E[d_iter+1] - sim$p_R[d_iter+1] - sum(sim[d_iter+1,paste0("p_I_",seq(1,15,1))])
+            }
+            
+            #####################################
+            ########## end simulation ###########
+            #####################################
+            
+            agg_schl$tests_administered[testing_days] = n_teachers
+            if( testing_pop == "All teachers + all students" | 
+                (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | 
+                (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
+              agg_schl$tests_administered[testing_days] = agg_schl$tests_administered[testing_days] + n_pupils
+            }
+            
+            
+            agg_schl$inc_inf_teachers = sim$t_I_1
+            if(school_type=="PRIMARY"){
+              agg_schl$inc_inf_pupils_PRIMARY = sim$p_I_1
+              
+            }
+            if(school_type=="SECONDARY"){
+              agg_schl$inc_inf_pupils_SECONDARY = sim$p_I_1
+            }
+            
+            #print(paste0("Scenario ",scenario_iter,": ",school_type," school #",school_iter," had ",n_teachers-sim$t_S[90]," teachers & ", n_pupils-sim$p_S[90],"pupils infected."))
+            #print(sim[seq(1,15),])
+            #print(sim[seq(86,90),])
+            
+            ##########################################################
+            ### End setup/sim/processing of each individual school ###
+            ##########################################################
+            
+            agg_natl = agg_natl + agg_schl
+            end_1_natl_sim <- Sys.time()
+            
+            #
+            
           }
           
-          #####################################
-          ########## end simulation ###########
-          #####################################
+          print(paste0("Scenario ", scenario_iter,": ",format(as.numeric(end_1_natl_sim-start_1_natl_sim,units="mins"),digits = 4)," min  -- ",
+                       sum(agg_natl$tests_administered)," tests, ",
+                       sum(agg_natl$inc_inf_teachers)," teachr inc, ",
+                       sum(agg_natl$inc_inf_pupils_PRIMARY)," 1o pupils inc, ",
+                       sum(agg_natl$inc_inf_pupils_SECONDARY)," 2o pupils inc -- ",
+                       testing_pop," -- ",testing_freq," -- Rt=",Rt," -- commprev ",community_prevalence))
           
-          agg_schl$tests_administered[testing_days] = n_teachers
-          if( testing_pop == "All teachers + all students" | 
-              (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | 
-              (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
-            agg_schl$tests_administered[testing_days] = agg_schl$tests_administered[testing_days] + n_pupils
-          }
+          write.csv(agg_natl, file=paste0("Scenario",scenario_iter,".csv"))
+          #####################################################
+          ### End loop over aggregate of all Malawi schools ###
+          #####################################################
           
-          
-          agg_schl$inc_inf_teachers = sim$t_I_1
-          if(school_type=="PRIMARY"){
-            agg_schl$inc_inf_pupils_PRIMARY = sim$p_I_1
-            
-          }
-          if(school_type=="SECONDARY"){
-            agg_schl$inc_inf_pupils_SECONDARY = sim$p_I_1
-          }
-          
-          #print(paste0("Scenario ",scenario_iter,": ",school_type," school #",school_iter," had ",n_teachers-sim$t_S[90]," teachers & ", n_pupils-sim$p_S[90],"pupils infected."))
-          #print(sim[seq(1,15),])
-          #print(sim[seq(86,90),])
-          
-          ##########################################################
-          ### End setup/sim/processing of each individual school ###
-          ##########################################################
-          
-          agg_natl = agg_natl + agg_schl
-          end_1_natl_sim <- Sys.time()
-          
-          #
-          
-        }
-        
-        print(paste0("Scenario ", scenario_iter,": ",format(as.numeric((end_1_natl_sim-start_1_natl_sim)/60),digits = 4)," min  -- ",
-                     sum(agg_natl$tests_administered)," tests, ",
-                     sum(agg_natl$inc_inf_teachers)," teachr inc, ",
-                     sum(agg_natl$inc_inf_pupils_PRIMARY)," 1o pupils inc, ",
-                     sum(agg_natl$inc_inf_pupils_SECONDARY)," 2o pupils inc -- ",
-                     testing_pop," -- ",testing_freq," -- Rt=",Rt," -- commprev ",community_prevalence))
-                   
-        write.csv(agg_natl, file=paste0("output_Malawi_natl_scale/Scenario",scenario_iter,".csv"))
-        #####################################################
-        ### End loop over aggregate of all Malawi schools ###
-        #####################################################
-        
-      }}}}
+        }}}}}
 
 ##########################################
 ### End loop over 72 testing scenarios ###
