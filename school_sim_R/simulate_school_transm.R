@@ -95,10 +95,10 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
         
         scenario_iter = scenario_iter+1
         
-        if(scenario_iter==19){scenario_iter = scenario_iter+1; next} # increment scenario_iter 19 because it is a random duplicate in the template that throws off the numbering
-        if(curr_scenario != "ALL" & curr_scenario != "all" & curr_scenario != scenario_iter){next} # option of running only one scenario (for parallel computing)
-
-        
+        # run only desired scenarios. Regardless, skip scenario_iter 19 because it is a random duplicate in the template that throws off the numbering
+        if(scenario_iter == 19 | (curr_scenario != "ALL" & curr_scenario != "all" & curr_scenario != scenario_iter)){next} # option of running only one scenario (for parallel computing)
+        print(scenario_iter)
+      }}}}
         #print(paste0("Scenario ",scenario_iter,": ",testing_pop," -- ",testing_freq," -- Rt=",Rt," -- comm prev ",community_prevalence))
         
         ## For testing purposes, just hard-set a single scenarion
