@@ -5,7 +5,7 @@ curr_scenario = 'all' # <== set to specific number or to 'all'
 curr_seed = 20210512
 set.seed(curr_seed)
 
-sim_size = 'LARGE'
+sim_size = 'SMALL'
 
 if(sim_size == "LARGE"){
 n_replicates = 100
@@ -358,7 +358,7 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
         
         }}}}
 
-print(print(paste0("Entire script took ",format(as.numeric(Sys.time()-start_bootstrap,units="mins"),digits = 4)," minutes."))
+print(print(paste0("Entire script took ",format(as.numeric(Sys.time()-start_script,units="mins"),digits = 4)," minutes."))
 )
 ##########################################
 ### End loop over 72 testing scenarios ###
