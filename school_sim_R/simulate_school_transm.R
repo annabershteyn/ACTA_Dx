@@ -1,9 +1,42 @@
 rm(list = ls())# clear the workspace
+start_script = Sys.time()
 library(stats)
 curr_scenario = 'all' # <== set to specific number or to 'all'
-n_replicates = 3
 curr_seed = 20210512
 set.seed(curr_seed)
+
+sim_size = 'LARGE'
+
+if(sim_size == "LARGE"){
+n_replicates = 100
+n_boostraps = 5000 
+fraction_of_Malawi_to_simulate = 1/5
+}else{
+  if(sim_size == "MEDIUM"){
+  n_replicates = 50
+  n_boostraps = 5000 
+  fraction_of_Malawi_to_simulate = 1/25
+}else{
+  if(sim_size == "SMALL"){
+    n_replicates = 2
+    n_boostraps = 100 
+    fraction_of_Malawi_to_simulate = 1/700}}}
+  
+
+
+#bsci <- function(x){bstrap <- c();for (i in 1:1000){bstrap = c(bstrap,mean(sample(x,length(x),replace=T)));return(as.vector(bstrap))}}
+fn_boot_95CI_lo <- function(x){
+  bstrap = c()
+  for(i in 1:n_boostraps){bstrap = c(bstrap, mean(sample(x,length(x),replace=T)))}
+  return(quantile(bstrap,.025))
+}
+
+fn_boot_95CI_hi <- function(x){
+  bstrap = c()
+  for(i in 1:n_boostraps){bstrap = c(bstrap, mean(sample(x,length(x),replace=T)))}
+  return(quantile(bstrap,.975))
+}
+
 
 ########################################################################################################
 ## Sources of data on number of primary and secondary schools, teachers/school, and pupils per school:##
@@ -13,13 +46,16 @@ set.seed(curr_seed)
 # 37.9	Pupil-teacher ratio, secondary education, Malawi, 2015	https://data.worldbank.org/indicator/SE.SEC.ENRL.TC.ZS?end=2019&locations=MW&start=1972&view=chart
 # 6065	Number of primary schools in Malawi, 2017	https://www.unicef.org/esa/sites/unicef.org.esa/files/2019-04/UNICEF-Malawi-2018-Education-Budget-Brief.pdf
 # 1411	Number of secondary schools in Malawi, 2017	https://www.unicef.org/esa/sites/unicef.org.esa/files/2019-04/UNICEF-Malawi-2018-Education-Budget-Brief.pdf
+
+# percent of enrolled pupils that are secondary school = 989847/(989847+4593328) = 17.8%
+# weighted average teachers per school = 0.178*18.50980517 + (1-0.178)*10.89555519 = 12.3
+# weighted avg total pop per school = 0.178*(18.50980517+701.5216159) + (1-0.178)*(10.89555519+757.3500412) = 759.66
+
 ########################################################################################################
 
 Malawi_n_primary_schools = 6065
 Malawi_n_secondary_schools = 1411
 Malawi_n_primary_schools + Malawi_n_secondary_schools
-
-fraction_of_Malawi_to_simulate = 1/700
 
 model_n_primary_schools = round(Malawi_n_primary_schools*fraction_of_Malawi_to_simulate,digits=0)
 model_n_secondary_schools = round(Malawi_n_secondary_schools*fraction_of_Malawi_to_simulate,digits=0)
@@ -59,8 +95,9 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
         
         scenario_iter = scenario_iter+1
         
+        if(scenario_iter==19){scenario_iter = scenario_iter+1; next} # increment scenario_iter 19 because it is a random duplicate in the template that throws off the numbering
         if(curr_scenario != "ALL" & curr_scenario != "all" & curr_scenario != scenario_iter){next} # option of running only one scenario (for parallel computing)
-        if(scenario_iter==19){print("Skipping Scenario 19 because it is identical to Scenario 18"); next}
+
         
         #print(paste0("Scenario ",scenario_iter,": ",testing_pop," -- ",testing_freq," -- Rt=",Rt," -- comm prev ",community_prevalence))
         
@@ -80,6 +117,11 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
         if(testing_freq=="2x/week"){testing_days = floor(seq(1,n_days_to_simulate,3.5))}
         
         
+      
+        if(n_replicates>1){
+          reps_to_agg = array(rep(0, n_days_to_simulate*length(agg_data_columns)*1, n_replicates), c(n_days_to_simulate, length(agg_data_columns),n_replicates))
+        }
+        
         ###################################################################################################################
         ### If looking for CI for multiple runs of the whole country -- begin loop over aggregate of all Malawi schools ###
         ###################################################################################################################
@@ -88,20 +130,19 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
           
           start_1_natl_sim <- Sys.time()
           
+          
           agg_natl = setNames(data.frame(matrix(0, ncol = length(agg_data_columns), nrow = n_days_to_simulate)), agg_data_columns)
+
+
           
-          if(n_replicates>1){
-            agg_indiv_reps = matrix()
-            
-          }
+
           
-          ############################################################
-          ### Begin setup/sim/processing of each individual school ###
-          ############################################################
-          
-          #for(school_iter in seq(1,3,1)){
           for(school_iter in seq(1,model_n_primary_schools + model_n_secondary_schools,1)){
             if(school_iter > model_n_primary_schools){school_type = "SECONDARY"}else{school_type = "PRIMARY"}
+            
+            ############################################################
+            ### Begin setup/sim/processing of each individual school ###
+            ############################################################           
             
             agg_schl = setNames(data.frame(matrix(0, ncol = length(agg_data_columns), nrow = n_days_to_simulate)), agg_data_columns)
             
@@ -257,20 +298,68 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
             
           }
           
-          print(paste0("Scenario ", scenario_iter,": ",format(as.numeric(end_1_natl_sim-start_1_natl_sim,units="mins"),digits = 4)," min  -- ",
+          print(paste0("Scenario ", scenario_iter,", rep ",replicate_number,": ",format(as.numeric(end_1_natl_sim-start_1_natl_sim,units="mins"),digits = 4)," min  -- ",
                        sum(agg_natl$tests_administered)," tests, ",
-                       sum(agg_natl$inc_inf_teachers)," teachr inc, ",
-                       sum(agg_natl$inc_inf_pupils_PRIMARY)," 1o pupils inc, ",
-                       sum(agg_natl$inc_inf_pupils_SECONDARY)," 2o pupils inc -- ",
-                       testing_pop," -- ",testing_freq," -- Rt=",Rt," -- commprev ",community_prevalence))
+                       sum(agg_natl$inc_inf_teachers)," tchrs, ",
+                       sum(agg_natl$inc_inf_pupils_PRIMARY)," 1o pupils, ",
+                       sum(agg_natl$inc_inf_pupils_SECONDARY)," 2o pupils -- ",
+                       testing_pop," -- ",testing_freq," -- Rt=",Rt," -- cmprv ",community_prevalence))
           
-          write.csv(agg_natl, file=paste0("Scenario",scenario_iter,".csv"))
+          
+          if(n_replicates>1){
+          reps_to_agg[,,replicate_number]=as.matrix(agg_natl) 
+          }
+          
+        }
+        
           #####################################################
           ### End loop over aggregate of all Malawi schools ###
           #####################################################
-          
-        }}}}}
+        if(n_replicates==1){write.csv(agg_natl, file=paste0("Scenario",scenario_iter,".csv"))}else{
+        
+        agg_mean = rowMeans(reps_to_agg, dims = 2)
 
+        # equivalent but slower
+        #agg_mean = apply(X = reps_to_agg, MARGIN = c(1,2), FUN = mean)
+        
+        ## Assuming normally distributed error is problematic -- causes negative incidence when sims are noisy at the single-day level
+        #agg_sd = as.data.frame(apply(X = reps_to_agg, MARGIN = c(1,2), FUN = sd))
+        #agg_me = qt(.975,n_replicates-1)*agg_sd/sqrt(n_replicates)
+        #agg_lo95CIme = agg_mean - agg_me
+        #agg_hi95CIme = agg_mean + agg_me
+        
+        ## Instead, will have to use non-parametric boostrapping technique to est 95% CI (albeit this is slow!)
+        start_bootstrap = Sys.time()
+        agg_lo95CIboot = apply(X = reps_to_agg, MARGIN = c(1,2),FUN = fn_boot_95CI_lo)
+        agg_hi95CIboot = apply(X = reps_to_agg, MARGIN = c(1,2),FUN = fn_boot_95CI_hi)
+
+        print(paste0("Scenario ", scenario_iter,": ",format(as.numeric(Sys.time()-start_bootstrap,units="mins"),digits = 4)," min spent obtaining booststrap CIs"))
+
+        results_data_columns = c('tests_95lo','tests_mean','tests_95hi',
+                                 'pupilsPRIMARY_95lo','pupilsPRIMARY-mean','pupilsPRIMARY_95hi',
+                                 'pupilsSECONDARY_95lo','pupilsSECONDARY_mean','pupilsSECONDARY_95hi',
+                                 'teachers_95lo','teachers_mean','teachers_hi')
+        
+        results_with_CI = setNames(data.frame(matrix(0, ncol = length(results_data_columns), nrow = n_days_to_simulate)), results_data_columns)
+        curr_column=0
+        for(output_unit_iter in seq(1,4,1)){
+          for(output_err_iter in seq(1,3,1)){
+            
+            curr_column=curr_column+1
+            curr_data_unit = agg_data_columns[output_unit_iter]
+            if(output_err_iter==1){results_with_CI[,curr_column] = agg_lo95CIboot[,output_unit_iter]}
+            if(output_err_iter==2){results_with_CI[,curr_column] = agg_mean[,      output_unit_iter]}
+            if(output_err_iter==3){results_with_CI[,curr_column] = agg_hi95CIboot[,output_unit_iter]}
+          }
+        }
+        
+        write.csv(results_with_CI, file=paste0("Scenario",scenario_iter,".csv"))
+        }
+        
+        }}}}
+
+print(print(paste0("Entire script took ",format(as.numeric(Sys.time()-start_bootstrap,units="mins"),digits = 4)," minutes."))
+)
 ##########################################
 ### End loop over 72 testing scenarios ###
 ##########################################
