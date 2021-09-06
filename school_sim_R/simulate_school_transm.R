@@ -2,10 +2,13 @@ rm(list = ls())# clear the workspace
 start_script = Sys.time()
 library(stats)
 curr_scenario = 'all' # <== set to specific number or to 'all'
+sim_size = 'SMALL'
 curr_seed = 20210512
 set.seed(curr_seed)
 ENABLE_SCHOOL_BASED_TESTING = TRUE
-sim_size = 'LARGE'
+SYMPTOMATIC_TESTING_FOR_PUPILS = TRUE
+SYMPTOMATIC_TESTING_FOR_TEACHERS = FALSE
+
 
 if(sim_size == "LARGE"){
 n_replicates = 100
@@ -71,7 +74,7 @@ days_of_active_infection = 15 # Gaussean distribution with no infectiousness on 
 
 # fraction symptomatic in ages under 19 and 40-59 from Poletti et al., JAMA Network Open. 2021;4(3):e211085-e211085. doi:10.1001/jamanetworkopen.2021.1085
 frac_symptomatic_pupils = 0.1809
-fract_symptomatic_teachers = 0.3054
+frac_symptomatic_teachers = 0.3054
 day_of_sx_onset = 5
 
 # Per WHO ACT-A team, test should be assumed to have 85% sensitivity on all days. Later data will provide sensitivity by day of infection.
@@ -84,7 +87,7 @@ agg_data_columns = c("tests_administered","inc_inf_pupils_PRIMARY","inc_inf_pupi
 # Subscript t denotes teacher, p denotes pupil. bI denotes the prob of infecting any given other person, before accounting for reduced susceptibility if kids.
 sim_data_columns = c("t_S","t_E",paste0("t_I_",seq(1,15)),"t_R","t_I1_comm","t_I1_schl","t_bI",
                      "p_S","p_E",paste0("p_I_",seq(1,15)),"p_R","p_I1_comm","p_I1_schl","p_bI",
-                     "n_tests") # building in but not using E since we have daily infectiousness
+                     "n_Sx_tests") # building in but not using E since we have daily infectiousness
 
 
 
@@ -216,6 +219,34 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
               
               if(((d_iter-1) %% 7)<(7*frac_days_in_school)){
                 
+                if(SYMPTOMATIC_TESTING_FOR_PUPILS){
+                  
+                  n_pupils_sx = rbinom(1,sim[d_iter,paste0("p_I_",day_of_sx_onset)],frac_symptomatic_pupils)
+                  # assume all symptomatic pupils get a test, so add this to number of tests used:
+                  
+                  sim[d_iter,"n_Sx_tests"]= sim[d_iter,"n_Sx_tests"] + n_pupils_sx
+                  n_pupils_sx_test_pos = rbinom(1,n_pupils_sx,test_sensitivity)
+                  
+                  # for pupils who test positive, move them out of Infectious...
+                  sim[d_iter,paste0("p_I_",day_of_sx_onset)] = sim[d_iter,paste0("p_I_",day_of_sx_onset)] - n_pupils_sx_test_pos
+                  #... and into Recovered (i.e., quarantine)
+                  sim$p_R[d_iter]                     = sim$p_R[d_iter]                                   + n_pupils_sx_test_pos
+                  
+                }
+                if(SYMPTOMATIC_TESTING_FOR_TEACHERS){
+                  
+                  n_teachers_sx = rbinom(1,sim[d_iter,paste0("t_I_",day_of_sx_onset)],frac_symptomatic_teachers)
+                  # assume all symptomatic pupils get a test, so add this to number of tests used:
+                  
+                  sim[d_iter,"n_Sx_tests"]= sim[d_iter,"n_Sx_tests"] + n_teachers_sx
+                  n_teachers_sx_test_pos = rbinom(1,n_teachers_sx,test_sensitivity)
+                  
+                  # for pupils who test positive, move them out of Infectious...
+                  sim[d_iter,paste0("t_I_",day_of_sx_onset)] = sim[d_iter,paste0("t_I_",day_of_sx_onset)] - n_teachers_sx_test_pos
+                  #... and into Recovered (i.e., quarantine)
+                  sim$t_R[d_iter]                     = sim$t_R[d_iter]                             + n_teachers_sx_test_pos
+                  
+                }
                 if(ENABLE_SCHOOL_BASED_TESTING){
                   
                   # Check if today is a testing day
@@ -300,6 +331,9 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
                 (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | 
                 (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
               agg_schl$tests_administered[testing_days] = agg_schl$tests_administered[testing_days] + n_pupils
+            }
+            if(SYMPTOMATIC_TESTING_FOR_PUPILS){
+              agg_schl$tests_administered = agg_schl$tests_administered + sim$n_Sx_tests
             }
             
             
