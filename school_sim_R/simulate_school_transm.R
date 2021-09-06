@@ -4,8 +4,8 @@ library(stats)
 curr_scenario = 'all' # <== set to specific number or to 'all'
 curr_seed = 20210512
 set.seed(curr_seed)
-
-sim_size = 'SMALL'
+ENABLE_SCHOOL_BASED_TESTING = TRUE
+sim_size = 'LARGE'
 
 if(sim_size == "LARGE"){
 n_replicates = 100
@@ -68,7 +68,14 @@ teachers_per_secondary_school = 18.50980517
 
 frac_days_in_school = 5/7 # Assume Day 1 of the sim to be a Monday and assume weekends are Saturdays and Sundays with no school in session
 days_of_active_infection = 15 # Gaussean distribution with no infectiousness on Day 1, peak infectiousness on days 4 and 5, then long tail to Day 15. 
-ENABLE_SCHOOL_BASED_TESTING = TRUE
+
+# fraction symptomatic in ages under 19 and 40-59 from Poletti et al., JAMA Network Open. 2021;4(3):e211085-e211085. doi:10.1001/jamanetworkopen.2021.1085
+frac_symptomatic_pupils = 0.1809
+fract_symptomatic_teachers = 0.3054
+day_of_sx_onset = 5
+
+# Per WHO ACT-A team, test should be assumed to have 85% sensitivity on all days. Later data will provide sensitivity by day of infection.
+test_sensitivity = 0.85
 
 # For each run of the entire school system of Malawi, obtain aggregate counts across schools of the following. (Re-run Malawi 100's of times to obtain mean and CI of these)
 agg_data_columns = c("tests_administered","inc_inf_pupils_PRIMARY","inc_inf_pupils_SECONDARY","inc_inf_teachers") # building in but not using E since we have daily infectiousness
@@ -82,7 +89,7 @@ sim_data_columns = c("t_S","t_E",paste0("t_I_",seq(1,15)),"t_R","t_I1_comm","t_I
 
 
 scenario_iter = 0
-# ask organizers -- are scenarios 18 and 19 identical? answer -- yes and should skip scenario 19
+# ask organizers -- are scenarios 18 and 19 identical? answer -- yes and should skip scenario 19 -- so will need to increment everything from 19 and up by 1
 
 ############################################
 ### Begin loop over 72 testing scenarios ###
@@ -96,7 +103,8 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
         scenario_iter = scenario_iter+1
         
         # run only desired scenarios. Regardless, skip scenario_iter 19 because it is a random duplicate in the template that throws off the numbering
-        if(scenario_iter == 19 | (curr_scenario != "ALL" & curr_scenario != "all" & curr_scenario != scenario_iter)){next} # option of running only one scenario (for parallel computing)
+        if(curr_scenario != "ALL" & curr_scenario != "all" & curr_scenario != scenario_iter){next} # option of running only one scenario (for parallel computing)
+        #if(scenario_iter == 19 | (curr_scenario != "ALL" & curr_scenario != "all" & curr_scenario != scenario_iter)){next} # option of running only one scenario (for parallel computing)
         print(scenario_iter)
 
         #print(paste0("Scenario ",scenario_iter,": ",testing_pop," -- ",testing_freq," -- Rt=",Rt," -- comm prev ",community_prevalence))
@@ -216,13 +224,34 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
                     ### NOTE, by changing seq(1,15,1) below to a narrower range, we can have an imperfect Ag test that misses the very start and end of infection when viral shedding is low
                     
                     # All testing strategies include teachers. So if it is a testing day, move infected teachers to R.
-                    sim$t_R[d_iter] = sim$t_R[d_iter] + sum(sim[d_iter,paste0("t_I_",seq(1,15,1))])
-                    sim[d_iter,paste0("t_I_",seq(1,15,1))]=0
+                    
+                    if( testing_pop == "All teachers + all students" | (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
+                      for(day_of_I in seq(1,15,1)){
+                        # determine how many infected teachers who are on this day of infection test positive based on test sensitivity 
+                        # TO DO: obtain data on test sensitivity by day of infection and implement a day-specific sensitivity
+                        n_test_pos = rbinom(1,sim[d_iter,paste0("t_I_",day_of_I)],test_sensitivity)
+                        
+                        # for teachers who test positive, move them out of Infectious...
+                        sim[d_iter,paste0("t_I_",day_of_I)] = sim[d_iter,paste0("t_I_",day_of_I)] - n_test_pos
+                        #... and into Recovered (i.e., quarantine)
+                        sim$t_R[d_iter]                     = sim$t_R[d_iter]                     + n_test_pos
+                      }
+                    }
+                    ## a faster but non-stochastic alternative of test sensitivity using rounding:                  
+                    #sim$t_R[d_iter] = sim$t_R[d_iter] + round(sum(sim[d_iter,paste0("t_I_",seq(1,15,1))])*test_sensitivity,digits=0)
+                    #sim[d_iter,paste0("t_I_",seq(1,15,1))]=round(sim[d_iter,paste0("t_I_",seq(1,15,1))]*(1-test_sensitivity),digits=0)
                     
                     # Some testing strategies include students. Always schools if "All teachers + all students." Secondary schools if "All teachers + 13-18 year olds." Primary schools if "All teachers + 5-12 year olds."
                     if( testing_pop == "All teachers + all students" | (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
-                      sim$p_R[d_iter] = sim$p_R[d_iter] + sum(sim[d_iter,paste0("p_I_",seq(1,15,1))])
-                      sim[d_iter,paste0("p_I_",seq(1,15,1))]=0
+                      for(day_of_I in seq(1,15,1)){
+                        n_test_pos = rbinom(1,sim[d_iter,paste0("p_I_",day_of_I)],test_sensitivity)
+                        sim[d_iter,paste0("p_I_",day_of_I)] = sim[d_iter,paste0("p_I_",day_of_I)] - n_test_pos
+                        sim$p_R[d_iter]                     = sim$p_R[d_iter]                     + n_test_pos
+                      }
+                      
+                      ## a faster but non-stochastic alternative of test sensitivity using rounding:
+                      #sim$p_R[d_iter] = sim$p_R[d_iter] + round(sum(sim[d_iter,paste0("p_I_",seq(1,15,1))])*test_sensitivity,digits=0)
+                      #sim[d_iter,paste0("p_I_",seq(1,15,1))]=round(sim[d_iter,paste0("p_I_",seq(1,15,1))]*(1-test_sensitivity),digits=0)
                     }
                   }
                 }
@@ -353,7 +382,9 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
           }
         }
         
-        write.csv(results_with_CI, file=paste0("Scenario",scenario_iter,".csv"))
+        if(scenario_iter<19){file_name = paste0("Scenario",scenario_iter,".csv")}
+        if(scenario_iter>=19){file_name = paste0("Scenario",scenario_iter+1,".csv")}
+        write.csv(results_with_CI, file=file_name)
         }
         
         }}}}
