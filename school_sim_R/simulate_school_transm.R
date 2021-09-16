@@ -7,7 +7,7 @@ curr_seed = 20210512
 set.seed(curr_seed)
 ENABLE_SCHOOL_BASED_TESTING = TRUE
 SYMPTOMATIC_TESTING_FOR_PUPILS = TRUE
-SYMPTOMATIC_TESTING_FOR_TEACHERS = FALSE
+SYMPTOMATIC_TESTING_FOR_TEACHERS = TRUE
 
 
 if(sim_size == "LARGE"){
@@ -217,46 +217,51 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
             
             for(d_iter in seq(1,n_days_to_simulate-1)){
               
-              if(((d_iter-1) %% 7)<(7*frac_days_in_school)){
+
+                
+                # on days school is in session, check if teachers and students are symptomatic and would test positive
+                # NOTE, I calculate this even if symptomatic testing is disabled to keep random number stream aligned
+                # but these numbers are only used to change testing and quarantine if it's enabled
+                n_pupils_sx = rbinom(1,sim[d_iter,paste0("p_I_",day_of_sx_onset)],frac_symptomatic_pupils)
+                n_pupils_sx_test_pos = rbinom(1,n_pupils_sx,test_sensitivity)
+                n_teachers_sx = rbinom(1,sim[d_iter,paste0("t_I_",day_of_sx_onset)],frac_symptomatic_teachers)
+                n_teachers_sx_test_pos = rbinom(1,n_teachers_sx,test_sensitivity)
                 
                 if(SYMPTOMATIC_TESTING_FOR_PUPILS){
                   
-                  n_pupils_sx = rbinom(1,sim[d_iter,paste0("p_I_",day_of_sx_onset)],frac_symptomatic_pupils)
                   # assume all symptomatic pupils get a test, so add this to number of tests used:
-                  
                   sim[d_iter,"n_Sx_tests"]= sim[d_iter,"n_Sx_tests"] + n_pupils_sx
-                  n_pupils_sx_test_pos = rbinom(1,n_pupils_sx,test_sensitivity)
-                  
+
                   # for pupils who test positive, move them out of Infectious...
                   sim[d_iter,paste0("p_I_",day_of_sx_onset)] = sim[d_iter,paste0("p_I_",day_of_sx_onset)] - n_pupils_sx_test_pos
+                  
                   #... and into Recovered (i.e., quarantine)
                   sim$p_R[d_iter]                     = sim$p_R[d_iter]                                   + n_pupils_sx_test_pos
                   
                 }
                 if(SYMPTOMATIC_TESTING_FOR_TEACHERS){
                   
-                  n_teachers_sx = rbinom(1,sim[d_iter,paste0("t_I_",day_of_sx_onset)],frac_symptomatic_teachers)
-                  # assume all symptomatic pupils get a test, so add this to number of tests used:
-                  
+                  # assume all symptomatic teachers get a test, so add this to number of tests used:
                   sim[d_iter,"n_Sx_tests"]= sim[d_iter,"n_Sx_tests"] + n_teachers_sx
-                  n_teachers_sx_test_pos = rbinom(1,n_teachers_sx,test_sensitivity)
-                  
-                  # for pupils who test positive, move them out of Infectious...
+
+                  # for teachers who test positive, move them out of Infectious...
                   sim[d_iter,paste0("t_I_",day_of_sx_onset)] = sim[d_iter,paste0("t_I_",day_of_sx_onset)] - n_teachers_sx_test_pos
+                  
                   #... and into Recovered (i.e., quarantine)
                   sim$t_R[d_iter]                     = sim$t_R[d_iter]                             + n_teachers_sx_test_pos
                   
                 }
-                if(ENABLE_SCHOOL_BASED_TESTING){
-                  
-                  # Check if today is a testing day
-                  if(is.element(d_iter,testing_days)){
+                
+                if(((d_iter-1) %% 7)<(7*frac_days_in_school)){
+                  if(ENABLE_SCHOOL_BASED_TESTING){
                     
-                    ### NOTE, by changing seq(1,15,1) below to a narrower range, we can have an imperfect Ag test that misses the very start and end of infection when viral shedding is low
-                    
-                    # All testing strategies include teachers. So if it is a testing day, move infected teachers to R.
-                    
-                    if( testing_pop == "All teachers + all students" | (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
+                    # Check if today is a testing day
+                    if(is.element(d_iter,testing_days)){
+                      
+                      ### NOTE, by changing seq(1,15,1) below to a narrower range, we can have an imperfect Ag test that misses the very start and end of infection when viral shedding is low
+                      
+                      # All testing strategies include teachers. So if it is a testing day, move infected teachers to R.
+                      
                       for(day_of_I in seq(1,15,1)){
                         # determine how many infected teachers who are on this day of infection test positive based on test sensitivity 
                         # TO DO: obtain data on test sensitivity by day of infection and implement a day-specific sensitivity
@@ -267,25 +272,25 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
                         #... and into Recovered (i.e., quarantine)
                         sim$t_R[d_iter]                     = sim$t_R[d_iter]                     + n_test_pos
                       }
-                    }
-                    ## a faster but non-stochastic alternative of test sensitivity using rounding:                  
-                    #sim$t_R[d_iter] = sim$t_R[d_iter] + round(sum(sim[d_iter,paste0("t_I_",seq(1,15,1))])*test_sensitivity,digits=0)
-                    #sim[d_iter,paste0("t_I_",seq(1,15,1))]=round(sim[d_iter,paste0("t_I_",seq(1,15,1))]*(1-test_sensitivity),digits=0)
-                    
-                    # Some testing strategies include students. Always schools if "All teachers + all students." Secondary schools if "All teachers + 13-18 year olds." Primary schools if "All teachers + 5-12 year olds."
-                    if( testing_pop == "All teachers + all students" | (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
-                      for(day_of_I in seq(1,15,1)){
-                        n_test_pos = rbinom(1,sim[d_iter,paste0("p_I_",day_of_I)],test_sensitivity)
-                        sim[d_iter,paste0("p_I_",day_of_I)] = sim[d_iter,paste0("p_I_",day_of_I)] - n_test_pos
-                        sim$p_R[d_iter]                     = sim$p_R[d_iter]                     + n_test_pos
-                      }
                       
-                      ## a faster but non-stochastic alternative of test sensitivity using rounding:
-                      #sim$p_R[d_iter] = sim$p_R[d_iter] + round(sum(sim[d_iter,paste0("p_I_",seq(1,15,1))])*test_sensitivity,digits=0)
-                      #sim[d_iter,paste0("p_I_",seq(1,15,1))]=round(sim[d_iter,paste0("p_I_",seq(1,15,1))]*(1-test_sensitivity),digits=0)
+                      ## a faster but non-stochastic alternative of test sensitivity using rounding:                  
+                      #sim$t_R[d_iter] = sim$t_R[d_iter] + round(sum(sim[d_iter,paste0("t_I_",seq(1,15,1))])*test_sensitivity,digits=0)
+                      #sim[d_iter,paste0("t_I_",seq(1,15,1))]=round(sim[d_iter,paste0("t_I_",seq(1,15,1))]*(1-test_sensitivity),digits=0)
+                      
+                      # Some testing strategies include students. Always schools if "All teachers + all students." Secondary schools if "All teachers + 13-18 year olds." Primary schools if "All teachers + 5-12 year olds."
+                      if( testing_pop == "All teachers + all students" | (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
+                        for(day_of_I in seq(1,15,1)){
+                          n_test_pos = rbinom(1,sim[d_iter,paste0("p_I_",day_of_I)],test_sensitivity)
+                          sim[d_iter,paste0("p_I_",day_of_I)] = sim[d_iter,paste0("p_I_",day_of_I)] - n_test_pos
+                          sim$p_R[d_iter]                     = sim$p_R[d_iter]                     + n_test_pos
+                        }
+                        
+                        ## a faster but non-stochastic alternative of test sensitivity using rounding:
+                        #sim$p_R[d_iter] = sim$p_R[d_iter] + round(sum(sim[d_iter,paste0("p_I_",seq(1,15,1))])*test_sensitivity,digits=0)
+                        #sim[d_iter,paste0("p_I_",seq(1,15,1))]=round(sim[d_iter,paste0("p_I_",seq(1,15,1))]*(1-test_sensitivity),digits=0)
+                      }
                     }
                   }
-                }
                 
                 # calculate how much infectiousness arises from all teachers (t_bI) and all pupils (p_bI)
                 sim$t_bI[d_iter] = sum(as.vector(sim[d_iter,paste0("t_I_",seq(1,15,1))]*infectiousness_over_time))
@@ -326,13 +331,15 @@ for(testing_pop in c("All teachers","All teachers + 13-18 year olds","All teache
             ########## end simulation ###########
             #####################################
             
-            agg_schl$tests_administered[testing_days] = n_teachers
-            if( testing_pop == "All teachers + all students" | 
-                (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | 
-                (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
-              agg_schl$tests_administered[testing_days] = agg_schl$tests_administered[testing_days] + n_pupils
+            if(ENABLE_SCHOOL_BASED_TESTING){
+              agg_schl$tests_administered[testing_days] = n_teachers
+              if( testing_pop == "All teachers + all students" | 
+                  (school_type=="SECONDARY" & testing_pop == "All teachers + 13-18 year olds") | 
+                  (school_type=="PRIMARY" & testing_pop == "All teachers + 5-12 year olds")){
+                agg_schl$tests_administered[testing_days] = agg_schl$tests_administered[testing_days] + n_pupils
+              }
             }
-            if(SYMPTOMATIC_TESTING_FOR_PUPILS){
+            if(SYMPTOMATIC_TESTING_FOR_TEACHERS | SYMPTOMATIC_TESTING_FOR_PUPILS){
               agg_schl$tests_administered = agg_schl$tests_administered + sim$n_Sx_tests
             }
             
